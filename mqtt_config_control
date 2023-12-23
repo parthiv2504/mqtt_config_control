@@ -1,0 +1,120 @@
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+
+const char* ssid = "Ashapura PG_4G";
+const char* password = "weallareone";
+
+const char* mqtt_server = "broker.hivemq.com";
+const int mqtt_port = 1883;
+const char* mqtt_client_id = "12345678";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+const int relay1Pin = BUILTIN_LED; // GPIO pin for LED
+const int relay2Pin = D2; // GPIO pin for relay 2
+
+void setup() {
+  Serial.begin(115200);
+  setupWiFi();
+  setupMQTT();
+  
+  pinMode(relay1Pin, OUTPUT);
+  pinMode(relay2Pin, OUTPUT);
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnectMQTT();
+  }
+  client.loop();
+}
+
+void setupWiFi() {
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("WiFi connected");
+}
+
+void setupMQTT() {
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback);
+
+  if (!client.connected()) {
+    reconnectMQTT();
+  }
+}
+
+void reconnectMQTT() {
+  while (!client.connected()) {
+    Serial.println("Connecting to MQTT...");
+    if (client.connect(mqtt_client_id)) {
+      Serial.println("MQTT connected");
+      client.subscribe("mqtt/config");
+      client.subscribe("mqtt/control");
+    } else {
+      Serial.print("MQTT connection failed, rc=");
+      Serial.println(client.state());
+      delay(2000);
+    }
+  }
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  payload[length] = '\0';
+  if (strcmp(topic, "mqtt/config") == 0) {
+    handleConfiguration((const char*)payload);
+  } else if (strcmp(topic, "mqtt/control") == 0) {
+    handleControl((const char*)payload);
+  }
+}
+
+void handleConfiguration(const char* configMessage) {
+  DynamicJsonDocument doc(256);
+  DeserializationError error = deserializeJson(doc, configMessage);
+
+  if (error) {
+    Serial.print("JSON parsing failed: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  int relayCount = doc["relay_count"].as<int>();
+  // Assuming relay states are specified in an array
+  JsonArray relayStates = doc["relay_states"].as<JsonArray>();
+
+  // Update relay states based on the configuration
+  for (int i = 0; i < relayCount; i++) {
+    int relayPin = (i == 0) ? relay1Pin : relay2Pin;
+    int state = relayStates[i].as<int>();
+
+  // To Print realy state and count
+    Serial.println("relay_states: " + String(state) + ", relay_count: " + String(relayCount));
+
+  // Set the pin state 
+    digitalWrite(relayPin, state);
+  }
+}
+
+void handleControl(const char* controlMessage) {
+  DynamicJsonDocument doc(128);
+  DeserializationError error = deserializeJson(doc, controlMessage);
+
+  if (error) {
+    Serial.print("JSON parsing failed: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  int relay = doc["relay"].as<int>();
+  int state = doc["state"].as<int>();
+  int relayPin = (relay == 1) ? relay1Pin : relay2Pin;
+
+// To Print pin number state and state
+  Serial.println("Pin: " + String(relayPin) + ", state: " + String(state));
+  digitalWrite(relayPin, state);
+}
